@@ -105,20 +105,51 @@ body {
 
 .status-bar {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(92vw, 1200px);
   z-index: 30;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 56px;
+  height: 60px;
   padding: 0 24px;
-  background: rgba(2, 11, 20, 0.82);
-  backdrop-filter: blur(var(--blur-glass));
-  border-bottom: 1px solid var(--border-dim);
-  /* Scan-line shine along the bottom edge */
-  box-shadow: 0 1px 0 var(--border-glow), 0 4px 24px rgba(34, 211, 238, 0.04);
+  background: rgba(2, 11, 20, 0.4);
+  backdrop-filter: blur(var(--blur-heavy));
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  isolation: isolate;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+@keyframes neon-spin {
+  100% {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+.status-bar::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 200%;
+  height: 400%;
+  /* Theme colors: cyan, teal, blue, deep */
+  background: conic-gradient(from 0deg, var(--bg-void), var(--accent), var(--text-secondary), var(--accent-bright), var(--bg-void));
+  transform: translate(-50%, -50%) rotate(0deg);
+  animation: neon-spin 4s linear infinite;
+  z-index: -2;
+}
+
+.status-bar::after {
+  content: "";
+  position: absolute;
+  inset: 2px; /* Controls border thickness */
+  background: var(--bg-deep); /* Solid inner background to prevent color bleed-through */
+  border-radius: calc(var(--radius-xl) - 2px);
+  z-index: -1;
 }
 
 .status-left {
@@ -1385,6 +1416,33 @@ kbd {
   .panel-arc { width: min(78vw, 580px); }
 }
 
+@media (max-width: 768px) {
+  .status-bar {
+    width: 95vw;
+    padding: 0 12px;
+    height: 50px;
+    border-radius: var(--radius-lg);
+  }
+  .status-bar::after {
+    border-radius: calc(var(--radius-lg) - 2px);
+  }
+  .brand-ultra, .brand-touch {
+    display: none;
+  }
+  .panel-tab {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+  .status-btn {
+    width: 30px;
+    height: 30px;
+    font-size: 14px;
+  }
+  .status-left {
+    gap: 12px;
+  }
+}
+
 @media (max-width: 600px) {
   .status-bar {
     padding: 0 12px;
@@ -1397,7 +1455,7 @@ kbd {
 
   .panel-arc {
     width: 95vw;
-    top: 58px;
+    top: 80px;
     bottom: 12px;
   }
 

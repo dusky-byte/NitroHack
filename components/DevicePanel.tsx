@@ -110,7 +110,7 @@ export default function DevicePanel({
                   onMouseEnter={() => onFocusDevice(idx)}
                 >
                   <div className="device-icon-wrap">
-                    <span className="device-icon">{device.icon}</span>
+                    <span className="device-icon material-symbols-outlined">{device.icon}</span>
                   </div>
                   <div className="device-info">
                     <span className="device-name">{device.name}</span>
@@ -135,8 +135,8 @@ export default function DevicePanel({
                     )}
                   </div>
                   {device.type === "lock" && (
-                    <span className="lock-badge" aria-hidden="true">
-                      {(device.state as boolean) ? "🔒" : "🔓"}
+                    <span className="lock-badge material-symbols-outlined" aria-hidden="true">
+                      {(device.state as boolean) ? "lock" : "lock_open"}
                     </span>
                   )}
                 </div>

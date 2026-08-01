@@ -65,3 +65,43 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export async function GET() {
+  try {
+    const adbPath = getAdbCommand();
+    const command = `${adbPath} devices -l`;
+    const { stdout, stderr } = await execPromise(command);
+
+    if (stderr && stderr.toLowerCase().includes("error")) {
+      return NextResponse.json({ devices: [] });
+    }
+
+    const lines = stdout.split('\n').map(l => l.trim()).filter(l => l);
+    const devices = [];
+    
+    // Skip the first line "List of devices attached"
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.includes("daemon")) continue; // Skip daemon startup logs
+      const parts = line.split(/\s+/);
+      if (parts.length >= 2) {
+        const id = parts[0];
+        const status = parts[1];
+        
+        let model = id;
+        for (const p of parts) {
+          if (p.startsWith('model:')) {
+            model = p.replace('model:', '').replace(/_/g, ' ');
+          }
+        }
+        
+        devices.push({ id, status, model });
+      }
+    }
+    
+    return NextResponse.json({ devices });
+  } catch (error: any) {
+    console.error("ADB GET Error:", error);
+    return NextResponse.json({ devices: [] });
+  }
+}

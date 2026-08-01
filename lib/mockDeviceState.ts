@@ -27,7 +27,7 @@ const INITIAL_DEVICES: Device[] = [
   {
     id: "media-play-pause",
     name: "Play / Pause Media",
-    icon: "🎵",
+    icon: "music_note",
     type: "toggle",
     state: false,
     category: "android",
@@ -36,7 +36,7 @@ const INITIAL_DEVICES: Device[] = [
   {
     id: "media-next",
     name: "Next Track",
-    icon: "⏭️",
+    icon: "skip_next",
     type: "toggle",
     state: false,
     category: "android",
@@ -45,7 +45,7 @@ const INITIAL_DEVICES: Device[] = [
   {
     id: "screen-power",
     name: "Screen Lock / Wake",
-    icon: "📱",
+    icon: "smartphone",
     type: "lock",
     state: true,
     category: "android",
@@ -54,7 +54,7 @@ const INITIAL_DEVICES: Device[] = [
   {
     id: "volume-up",
     name: "Volume Up",
-    icon: "🔊",
+    icon: "volume_up",
     type: "toggle",
     state: false,
     category: "android",
@@ -63,7 +63,7 @@ const INITIAL_DEVICES: Device[] = [
   {
     id: "volume-down",
     name: "Volume Down",
-    icon: "🔉",
+    icon: "volume_down",
     type: "toggle",
     state: false,
     category: "android",
@@ -74,9 +74,49 @@ const INITIAL_DEVICES: Device[] = [
 export class MockDeviceState {
   private devices: Device[];
   private listeners = new Set<DeviceListener>();
+  private pollingInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
-    this.devices = INITIAL_DEVICES.map((d) => ({ ...d }));
+    this.devices = [];
+    // Only fetch if running in browser
+    if (typeof window !== "undefined") {
+      this.fetchDevices();
+      this.startPolling();
+    }
+  }
+
+  private async fetchDevices() {
+    try {
+      const res = await fetch("/api/android");
+      const data = await res.json();
+      
+      if (data.devices && data.devices.length > 0) {
+        const connectedDevices: Device[] = data.devices.map((d: any) => ({
+          id: `adb-device-${d.id}`,
+          name: `${d.model} (${d.status})`,
+          icon: d.status === "device" ? "smartphone" : "warning",
+          type: "toggle",
+          state: d.status === "device",
+          category: "android",
+        }));
+        
+        // Only show controls if there's an actual device connected
+        this.devices = [...connectedDevices, ...INITIAL_DEVICES];
+      } else {
+        this.devices = [];
+      }
+      this.notify();
+    } catch (err) {
+      console.error("Failed to fetch devices:", err);
+      this.devices = [];
+      this.notify();
+    }
+  }
+
+  private startPolling() {
+    if (!this.pollingInterval) {
+      this.pollingInterval = setInterval(() => this.fetchDevices(), 5000);
+    }
   }
 
   subscribe(listener: DeviceListener): () => void {

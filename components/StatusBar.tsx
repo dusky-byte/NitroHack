@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 
 import type { DiscreteGesture } from "@/lib/gestureClassifier";
 import type { TrackerStatus } from "@/lib/handTracker";
@@ -98,7 +99,8 @@ export default function StatusBar({
             title="Voice Command" 
             type="button"
           >
-            {voiceListening ? "🎙️..." : "🎙️"}
+            <span className="material-symbols-outlined">mic</span>
+            {voiceListening && "..."}
           </button>
         )}
         {voiceListening && voiceTranscript && (
@@ -107,9 +109,14 @@ export default function StatusBar({
             <span className="voice-transcript-dot">●</span>
           </div>
         )}
-        <button className="status-btn" onClick={onShowGuide} aria-label="Gesture guide" title="Gesture guide (?)" type="button">?</button>
+        <Link href="/help" className="status-btn" title="Setup & Help" aria-label="Help">
+          <span className="material-symbols-outlined">menu_book</span>
+        </Link>
+        <button className="status-btn" onClick={onShowGuide} aria-label="Gesture guide" title="Gesture guide (?)" type="button">
+          <span className="material-symbols-outlined">help</span>
+        </button>
         <button className="status-btn" onClick={onToggleMute} aria-label={soundMuted ? "Unmute" : "Mute"} aria-pressed={!soundMuted} title="Toggle sound (M)" type="button">
-          {soundMuted ? "🔇" : "🔊"}
+          <span className="material-symbols-outlined">{soundMuted ? "volume_off" : "volume_up"}</span>
         </button>
         <button
           className={`status-btn camera-btn ${cameraOn ? "active" : ""}`}
@@ -120,7 +127,8 @@ export default function StatusBar({
           title="Toggle camera (G)"
           type="button"
         >
-          {cameraOn ? "📸 On" : "📸 Off"}
+          <span className="material-symbols-outlined" style={{ marginRight: 4 }}>{cameraOn ? "videocam" : "videocam_off"}</span>
+          {cameraOn ? "On" : "Off"}
         </button>
       </div>
     </header>
