@@ -581,7 +581,7 @@ export default function UltraTouch() {
       <main className="panel-arc" role="main">
         <div
           className={`panel-container ${expanded ? "expanded" : ""}`}
-          style={{ transform: `translateX(${-activePanel * 100}%)` }}
+          style={{ transform: `translateX(${-activePanel * (100 / PANEL_COUNT)}%)` }}
         >
           <section className={`panel-slot ${activePanel === 0 ? "active" : ""}`} aria-hidden={activePanel !== 0}>
             <DataPanel
