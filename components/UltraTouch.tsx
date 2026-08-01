@@ -66,6 +66,8 @@ export default function UltraTouch() {
   const [voiceListening, setVoiceListening] = useState(false);
   const voiceListeningRef = useRef(false);
   const recognitionRef = useRef<any>(null);
+  const [voiceTranscript, setVoiceTranscript] = useState("");
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ——— Activity log helper ———
   const addActivity = useCallback(
@@ -81,6 +83,138 @@ export default function UltraTouch() {
     },
     [],
   );
+
+  // Submit the final voice transcript to the backend
+  const submitVoiceCommand = useCallback(
+    async (transcript: string) => {
+      if (!transcript.trim()) return;
+      addActivity("🗣️", `Heard: "${transcript}"`, "info");
+
+      try {
+        const res = await fetch("/api/voice", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ transcript }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          const results = data.executed ?? [];
+          const summary = results
+            .map((r: any) => `${r.status === "success" ? "✓" : "✗"} ${r.message ?? r.command}`)
+            .join(", ");
+          addActivity("🤖", summary || "Command executed", "success");
+        } else {
+          addActivity("❌", `AI Error: ${data.error}`, "error");
+        }
+      } catch (err: any) {
+        addActivity("❌", `Failed to contact AI: ${err.message}`, "error");
+      }
+    },
+    [addActivity],
+  );
+
+  // ——— Voice Recognition ———
+  useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    recognition.onstart = () => {
+      voiceListeningRef.current = true;
+      setVoiceListening(true);
+      setVoiceTranscript("");
+      addActivity("🎙️", "Listening — speak your command…", "info");
+    };
+
+    recognition.onresult = (event: any) => {
+      // Clear any existing silence timer
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = null;
+      }
+
+      let finalText = "";
+      let interimText = "";
+
+      for (let i = 0; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result.isFinal) {
+          finalText += result[0].transcript;
+        } else {
+          interimText += result[0].transcript;
+        }
+      }
+
+      const currentText = (finalText + interimText).trim();
+      setVoiceTranscript(currentText);
+
+      // After 2 seconds of silence, auto-submit
+      if (currentText) {
+        silenceTimerRef.current = setTimeout(() => {
+          silenceTimerRef.current = null;
+          try { recognition.stop(); } catch { /* already stopped */ }
+          submitVoiceCommand(currentText);
+        }, 2000);
+      }
+    };
+
+    recognition.onerror = (event: any) => {
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = null;
+      }
+      voiceListeningRef.current = false;
+      setVoiceListening(false);
+      setVoiceTranscript("");
+      if (event.error !== "aborted" && event.error !== "no-speech") {
+        addActivity("❌", `Voice error: ${event.error}`, "error");
+      }
+    };
+
+    recognition.onend = () => {
+      voiceListeningRef.current = false;
+      setVoiceListening(false);
+    };
+
+    recognitionRef.current = recognition;
+
+    return () => {
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      try { recognition.stop(); } catch { /* noop */ }
+    };
+  }, [addActivity, submitVoiceCommand]);
+
+  const toggleVoice = useCallback(() => {
+    if (!recognitionRef.current) {
+      addActivity("❌", "Speech Recognition not supported in this browser", "error");
+      return;
+    }
+    if (voiceListeningRef.current) {
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = null;
+      }
+      recognitionRef.current.stop();
+      voiceListeningRef.current = false;
+      setVoiceListening(false);
+      setVoiceTranscript("");
+    } else {
+      try {
+        voiceListeningRef.current = true;
+        setVoiceTranscript("");
+        recognitionRef.current.start();
+      } catch (e) {
+        voiceListeningRef.current = false;
+        console.error("Failed to start voice", e);
+      }
+    }
+  }, [addActivity]);
+
+
 
   // ——— Scene initialization ———
   useEffect(() => {
@@ -397,79 +531,6 @@ export default function UltraTouch() {
 
   const cameraOn = camera === "on";
 
-  // ——— Voice Recognition ———
-  useEffect(() => {
-    // Check for browser support
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.lang = "en-US";
-
-      recognition.onstart = () => {
-        voiceListeningRef.current = true;
-        setVoiceListening(true);
-        addActivity("🎙️", "Listening...", "info");
-      };
-
-      recognition.onresult = async (event: any) => {
-        const transcript = event.results[0][0].transcript;
-        addActivity("🗣️", `Heard: "${transcript}"`, "info");
-        setVoiceListening(false);
-
-        // Send to backend
-        try {
-          const res = await fetch("/api/voice", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ transcript })
-          });
-          const data = await res.json();
-          if (res.ok) {
-            addActivity("🤖", "Executed AI command successfully", "success");
-          } else {
-            addActivity("❌", `AI Error: ${data.error}`, "error");
-          }
-        } catch (err: any) {
-          addActivity("❌", `Failed to contact AI: ${err.message}`, "error");
-        }
-      };
-
-      recognition.onerror = (event: any) => {
-        voiceListeningRef.current = false;
-        setVoiceListening(false);
-        addActivity("❌", `Voice error: ${event.error}`, "error");
-      };
-
-      recognition.onend = () => {
-        voiceListeningRef.current = false;
-        setVoiceListening(false);
-      };
-
-      recognitionRef.current = recognition;
-    }
-  }, [addActivity]);
-
-  const toggleVoice = useCallback(() => {
-    if (!recognitionRef.current) {
-      addActivity("❌", "Speech Recognition not supported in this browser", "error");
-      return;
-    }
-    if (voiceListeningRef.current) {
-      recognitionRef.current.stop();
-      voiceListeningRef.current = false;
-      setVoiceListening(false);
-    } else {
-      try {
-        voiceListeningRef.current = true;
-        recognitionRef.current.start();
-      } catch (e) {
-        voiceListeningRef.current = false;
-        console.error("Failed to start voice", e);
-      }
-    }
-  }, [addActivity]);
 
   return (
     <>
@@ -487,6 +548,7 @@ export default function UltraTouch() {
         onToggleMute={toggleMute}
         onShowGuide={() => setShowGuide(true)}
         voiceListening={voiceListening}
+        voiceTranscript={voiceTranscript}
         onToggleVoice={toggleVoice}
       />
 

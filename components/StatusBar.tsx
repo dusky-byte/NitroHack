@@ -14,6 +14,7 @@ interface StatusBarProps {
   onToggleMute: () => void;
   onShowGuide: () => void;
   voiceListening?: boolean;
+  voiceTranscript?: string;
   onToggleVoice?: () => void;
 }
 
@@ -31,7 +32,7 @@ export default function StatusBar({
   cameraOn, cameraStarting, gesture, gestureProgress,
   soundMuted, activePanel,
   onToggleCamera, onToggleMute, onShowGuide,
-  voiceListening = false, onToggleVoice
+  voiceListening = false, voiceTranscript = "", onToggleVoice
 }: StatusBarProps) {
   const info = GESTURE_INFO[gesture];
   const showProgress = gestureProgress > 0 && gestureProgress < 1 && cameraOn;
@@ -99,6 +100,12 @@ export default function StatusBar({
           >
             {voiceListening ? "🎙️..." : "🎙️"}
           </button>
+        )}
+        {voiceListening && voiceTranscript && (
+          <div className="voice-transcript" aria-live="polite">
+            <span className="voice-transcript-text">{voiceTranscript}</span>
+            <span className="voice-transcript-dot">●</span>
+          </div>
         )}
         <button className="status-btn" onClick={onShowGuide} aria-label="Gesture guide" title="Gesture guide (?)" type="button">?</button>
         <button className="status-btn" onClick={onToggleMute} aria-label={soundMuted ? "Unmute" : "Mute"} aria-pressed={!soundMuted} title="Toggle sound (M)" type="button">
