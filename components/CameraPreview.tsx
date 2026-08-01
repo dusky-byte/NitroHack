@@ -32,10 +32,8 @@ export default function CameraPreview({
   status,
   gesture,
 }: CameraPreviewProps) {
-  if (!cameraOn) return null;
-
   return (
-    <div className="camera-preview" aria-label="Camera preview">
+    <div className="camera-preview" aria-label="Camera preview" style={{ display: cameraOn ? "block" : "none" }}>
       <video
         ref={videoRef}
         muted

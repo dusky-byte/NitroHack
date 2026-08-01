@@ -11,8 +11,9 @@ interface DevicePanelProps {
   confirmingDevice: string | null;
 }
 
-const CATEGORY_ORDER = ["lighting", "climate", "security", "appliances"] as const;
+const CATEGORY_ORDER = ["android", "lighting", "climate", "security", "appliances"] as const;
 const CATEGORY_LABELS: Record<string, string> = {
+  android: "Android Controls",
   lighting: "Lighting",
   climate: "Climate",
   security: "Security",

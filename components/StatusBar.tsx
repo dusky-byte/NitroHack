@@ -1,48 +1,48 @@
 "use client";
 
 import type { DiscreteGesture } from "@/lib/gestureClassifier";
+import type { TrackerStatus } from "@/lib/handTracker";
 
 interface StatusBarProps {
   cameraOn: boolean;
   cameraStarting: boolean;
   gesture: DiscreteGesture;
+  gestureProgress: number; // 0..1 hold progress
   soundMuted: boolean;
   activePanel: number;
   onToggleCamera: () => void;
   onToggleMute: () => void;
   onShowGuide: () => void;
+  voiceListening?: boolean;
+  onToggleVoice?: () => void;
 }
 
 const PANEL_NAMES = ["Data", "Devices", "Activity"];
 
-const GESTURE_BADGE: Record<DiscreteGesture, { label: string; className: string }> = {
-  open_palm: { label: "✋ Palm", className: "badge-palm" },
-  fist: { label: "✊ Fist", className: "badge-fist" },
-  point: { label: "👆 Point", className: "badge-point" },
-  pinch: { label: "🤏 Pinch", className: "badge-pinch" },
-  none: { label: "— Idle", className: "badge-idle" },
+const GESTURE_INFO: Record<DiscreteGesture, { label: string; cls: string }> = {
+  open_palm: { label: "✋ Palm",  cls: "badge-palm"  },
+  fist:      { label: "✊ Fist",  cls: "badge-fist"  },
+  point:     { label: "👆 Point", cls: "badge-point" },
+  pinch:     { label: "🤏 Pinch", cls: "badge-pinch" },
+  none:      { label: "— Idle",   cls: "badge-idle"  },
 };
 
 export default function StatusBar({
-  cameraOn,
-  cameraStarting,
-  gesture,
-  soundMuted,
-  activePanel,
-  onToggleCamera,
-  onToggleMute,
-  onShowGuide,
+  cameraOn, cameraStarting, gesture, gestureProgress,
+  soundMuted, activePanel,
+  onToggleCamera, onToggleMute, onShowGuide,
+  voiceListening = false, onToggleVoice
 }: StatusBarProps) {
-  const badge = GESTURE_BADGE[gesture];
+  const info = GESTURE_INFO[gesture];
+  const showProgress = gestureProgress > 0 && gestureProgress < 1 && cameraOn;
 
   return (
     <header className="status-bar" role="banner">
       <div className="status-left">
         <h1 className="brand">
-          <span className="brand-ultra">Ultra</span>
-          <span className="brand-touch">Touch</span>
+          <span className="brand-ultra">Ultra</span><span className="brand-touch">Touch</span>
         </h1>
-        <div className="panel-tabs" role="tablist" aria-label="Active panel">
+        <nav className="panel-tabs" role="tablist" aria-label="Panels">
           {PANEL_NAMES.map((name, i) => (
             <span
               key={name}
@@ -53,47 +53,67 @@ export default function StatusBar({
               {name}
             </span>
           ))}
-        </div>
+        </nav>
       </div>
 
       <div className="status-center">
         {cameraOn && (
-          <span className={`gesture-badge ${badge.className}`} aria-live="polite">
-            {badge.label}
-          </span>
+          <div className="gesture-badge-wrap">
+            <span className={`gesture-badge ${info.cls}`} aria-live="polite">
+              {info.label}
+            </span>
+            {showProgress && (
+              <div className="hold-ring-track" aria-hidden="true">
+                <svg width="36" height="36" viewBox="0 0 36 36">
+                  <circle
+                    cx="18" cy="18" r="14"
+                    fill="none"
+                    stroke="rgba(56,189,248,0.15)"
+                    strokeWidth="2.5"
+                  />
+                  <circle
+                    cx="18" cy="18" r="14"
+                    fill="none"
+                    stroke="#38bdf8"
+                    strokeWidth="2.5"
+                    strokeDasharray={`${gestureProgress * 87.96} 87.96`}
+                    strokeLinecap="round"
+                    transform="rotate(-90 18 18)"
+                    style={{ transition: "stroke-dasharray 0.05s linear" }}
+                  />
+                </svg>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
       <div className="status-right">
-        <button
-          className="status-btn"
-          onClick={onShowGuide}
-          aria-label="Show gesture guide"
-          title="Gesture guide (?)"
-          type="button"
-        >
-          ?
-        </button>
-        <button
-          className="status-btn"
-          onClick={onToggleMute}
-          aria-label={soundMuted ? "Unmute sounds" : "Mute sounds"}
-          aria-pressed={!soundMuted}
-          title="Toggle sound"
-          type="button"
-        >
+        {onToggleVoice && (
+          <button 
+            className={`status-btn ${voiceListening ? "active voice-active" : ""}`} 
+            onClick={onToggleVoice} 
+            aria-label="Voice Command" 
+            title="Voice Command" 
+            type="button"
+          >
+            {voiceListening ? "🎙️..." : "🎙️"}
+          </button>
+        )}
+        <button className="status-btn" onClick={onShowGuide} aria-label="Gesture guide" title="Gesture guide (?)" type="button">?</button>
+        <button className="status-btn" onClick={onToggleMute} aria-label={soundMuted ? "Unmute" : "Mute"} aria-pressed={!soundMuted} title="Toggle sound (M)" type="button">
           {soundMuted ? "🔇" : "🔊"}
         </button>
         <button
           className={`status-btn camera-btn ${cameraOn ? "active" : ""}`}
           onClick={onToggleCamera}
           disabled={cameraStarting}
-          aria-label={cameraOn ? "Disable camera" : "Enable camera"}
+          aria-label={cameraOn ? "Disable camera" : "Enable gesture camera"}
           aria-pressed={cameraOn}
           title="Toggle camera (G)"
           type="button"
         >
-          {cameraStarting ? "⏳" : cameraOn ? "📹" : "📷"}
+          {cameraOn ? "📸 On" : "📸 Off"}
         </button>
       </div>
     </header>

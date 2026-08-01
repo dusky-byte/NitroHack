@@ -1,7 +1,6 @@
 // ——————————————————————————————————————————————
-// Mock smart-device state manager for UltraTouch.
-// Simulates IoT devices; swap this class for a real API client
-// (e.g., Home Assistant, SmartThings) without changing consumers.
+// Android Device State manager for UltraTouch.
+// Now acts as a frontend bridge to our local ADB Next.js API route.
 // ——————————————————————————————————————————————
 
 export interface Device {
@@ -10,85 +9,60 @@ export interface Device {
   icon: string;
   type: "toggle" | "range" | "lock";
   state: boolean | number;
-  category: "lighting" | "climate" | "security" | "appliances";
-  /** For range devices: minimum value */
-  rangeMin?: number;
-  /** For range devices: maximum value */
-  rangeMax?: number;
-  /** For range devices: unit label */
-  rangeUnit?: string;
+  category: "lighting" | "climate" | "security" | "appliances" | "android";
+  /** The ADB action mapped to this device */
+  actionId?: string;
 }
 
 export type DeviceListener = (devices: Device[]) => void;
 
+// We redefine our devices to map to the Android features we can control
 const INITIAL_DEVICES: Device[] = [
   {
-    id: "living-light",
-    name: "Living Room Light",
-    icon: "💡",
-    type: "toggle",
-    state: true,
-    category: "lighting",
-  },
-  {
-    id: "kitchen-light",
-    name: "Kitchen Light",
-    icon: "💡",
+    id: "media-play-pause",
+    name: "Play / Pause Media",
+    icon: "🎵",
     type: "toggle",
     state: false,
-    category: "lighting",
+    category: "android",
+    actionId: "media_play_pause",
   },
   {
-    id: "bedroom-light",
-    name: "Bedroom Light",
-    icon: "🔆",
+    id: "media-next",
+    name: "Next Track",
+    icon: "⏭️",
     type: "toggle",
     state: false,
-    category: "lighting",
+    category: "android",
+    actionId: "media_next",
   },
   {
-    id: "thermostat",
-    name: "Thermostat",
-    icon: "🌡",
-    type: "range",
-    state: 72,
-    category: "climate",
-    rangeMin: 60,
-    rangeMax: 85,
-    rangeUnit: "°F",
-  },
-  {
-    id: "bedroom-fan",
-    name: "Bedroom Fan",
-    icon: "🌀",
-    type: "toggle",
-    state: false,
-    category: "climate",
-  },
-  {
-    id: "front-lock",
-    name: "Front Door Lock",
-    icon: "🔒",
+    id: "screen-power",
+    name: "Screen Lock / Wake",
+    icon: "📱",
     type: "lock",
     state: true,
-    category: "security",
+    category: "android",
+    actionId: "screen_power",
   },
   {
-    id: "garage-door",
-    name: "Garage Door",
-    icon: "🚗",
+    id: "volume-up",
+    name: "Volume Up",
+    icon: "🔊",
     type: "toggle",
     state: false,
-    category: "security",
+    category: "android",
+    actionId: "volume_up",
   },
   {
-    id: "coffee-maker",
-    name: "Coffee Maker",
-    icon: "☕",
+    id: "volume-down",
+    name: "Volume Down",
+    icon: "🔉",
     type: "toggle",
     state: false,
-    category: "appliances",
-  },
+    category: "android",
+    actionId: "volume_down",
+  }
 ];
 
 export class MockDeviceState {
@@ -119,7 +93,12 @@ export class MockDeviceState {
     if (!device) return null;
 
     if (device.type === "toggle" || device.type === "lock") {
-      device.state = !device.state;
+      device.state = !device.state; // locally toggle state for visual feedback
+    }
+
+    // Fire HTTP request to ADB backend asynchronously
+    if (device.actionId) {
+      this.executeAdbAction(device.actionId).catch(console.error);
     }
 
     this.notify();
@@ -127,15 +106,26 @@ export class MockDeviceState {
   }
 
   setValue(deviceId: string, value: number): Device | null {
-    const device = this.devices.find((d) => d.id === deviceId);
-    if (!device || device.type !== "range") return null;
+    // Currently, our basic ADB integration uses simple key events instead of range setting
+    // But we keep this for interface compatibility
+    return null;
+  }
 
-    const min = device.rangeMin ?? 0;
-    const max = device.rangeMax ?? 100;
-    device.state = Math.max(min, Math.min(max, Math.round(value)));
-
-    this.notify();
-    return { ...device };
+  private async executeAdbAction(actionId: string) {
+    try {
+      const res = await fetch("/api/android", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: actionId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        console.error("ADB Action Failed:", data.error);
+        // You could emit an event here to show a toast in UI if needed
+      }
+    } catch (err) {
+      console.error("Failed to fetch /api/android:", err);
+    }
   }
 
   private notify(): void {

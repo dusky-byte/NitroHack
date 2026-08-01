@@ -20,10 +20,10 @@ type CameraState = "off" | "starting" | "on" | "error";
 
 const PANEL_COUNT = 3;
 
-/** How much horizontal drag is needed to switch panels */
-const PANEL_SWITCH_THRESHOLD = 0.8;
-/** How many consecutive frames a gesture must hold for an action */
-const GESTURE_HOLD_FRAMES = 15; // ~0.5s at 30fps
+/** Horizontal pinch-drag distance needed to switch panels */
+const PANEL_SWITCH_THRESHOLD = 0.6;
+/** Consecutive frames a gesture must hold before triggering action (~0.4s @ 30fps) */
+const GESTURE_HOLD_FRAMES = 12;
 
 export default function UltraTouch() {
   // ——— Refs ———
@@ -42,6 +42,7 @@ export default function UltraTouch() {
   const [status, setStatus] = useState<TrackerStatus>({ hands: 0, mode: "idle" });
   const [gesture, setGesture] = useState<DiscreteGesture>("none");
   const [error, setError] = useState<string | null>(null);
+  const [gestureProgress, setGestureProgress] = useState(0); // 0..1 hold progress
 
   // Panels: 0=Data, 1=Devices, 2=Activity
   const [activePanel, setActivePanel] = useState(0);
@@ -54,11 +55,16 @@ export default function UltraTouch() {
   const [soundMuted, setSoundMuted] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
+  const [showCameraPrompt, setShowCameraPrompt] = useState(true);
 
   // Gesture hold tracking
   const gestureHoldRef = useRef({ gesture: "none" as DiscreteGesture, frames: 0, acted: false });
   // Drag accumulation for panel switching
   const dragAccumRef = useRef(0);
+
+  // ——— Voice State ———
+  const [voiceListening, setVoiceListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
 
   // ——— Activity log helper ———
   const addActivity = useCallback(
@@ -70,7 +76,7 @@ export default function UltraTouch() {
         description,
         type,
       };
-      setActivityLog((prev) => [...prev.slice(-19), entry]);
+      setActivityLog((prev) => [...prev.slice(-29), entry]);
     },
     [],
   );
@@ -94,11 +100,8 @@ export default function UltraTouch() {
     const feed = dataFeedRef.current;
     const unsub = feed.subscribe((m) => {
       setMetrics(m);
-      // Drive ambient sonification from CPU load
       const cpu = m.find((x) => x.id === "cpu");
-      if (cpu) {
-        audioRef.current.setAmbientValue(cpu.value / 100);
-      }
+      if (cpu) audioRef.current.setAmbientValue(cpu.value / 100);
     });
     feed.start();
     return () => {
@@ -119,15 +122,20 @@ export default function UltraTouch() {
     sceneRef.current?.setFocusedPanel(activePanel);
   }, [activePanel]);
 
-  // ——— Mouse & Hand Tip Pointer Tracking for Plasma Orb Void Carving ———
+  // ——— Mouse pointer → orb void carving ———
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
       const ndcX = (e.clientX / window.innerWidth) * 2 - 1;
       const ndcY = -((e.clientY / window.innerHeight) * 2 - 1);
       sceneRef.current?.updatePointer(ndcX, ndcY, true);
     };
+    const onMouseOut = () => sceneRef.current?.updatePointer(0, 0, false);
     window.addEventListener("mousemove", onMouseMove, { passive: true });
-    return () => window.removeEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseout", onMouseOut, { passive: true });
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseout", onMouseOut);
+    };
   }, []);
 
   // ——— Gesture → UI action wiring ———
@@ -136,47 +144,47 @@ export default function UltraTouch() {
       if (landmarks.length === 0) {
         classifierRef.current.reset();
         setGesture("none");
+        setGestureProgress(0);
         sceneRef.current?.updatePointer(0, 0, false);
+        gestureHoldRef.current.acted = false;
+        gestureHoldRef.current.frames = 0;
         return;
       }
 
-      // Update pointer void from index fingertip (landmark 8)
+      // Drive orb void from index fingertip (landmark 8) — mirrored
       const primaryHand = landmarks[0];
-      if (primaryHand && primaryHand[8]) {
-        // Mirrored X for user perspective
+      if (primaryHand?.[8]) {
         const ndcX = (1 - primaryHand[8].x) * 2 - 1;
         const ndcY = -(primaryHand[8].y * 2 - 1);
         sceneRef.current?.updatePointer(ndcX, ndcY, true);
       }
 
-      // Classify primary hand (first detected)
       const g = classifierRef.current.update(primaryHand);
       setGesture(g);
 
-      // Hold tracking for discrete gestures
+      // Hold-frame accumulator
       const hold = gestureHoldRef.current;
-      if (g === hold.gesture) {
-        hold.frames++;
-      } else {
+      if (g === hold.gesture && g !== "none" && g !== "pinch") {
+        hold.frames = Math.min(hold.frames + 1, GESTURE_HOLD_FRAMES);
+      } else if (g !== hold.gesture) {
         hold.gesture = g;
-        hold.frames = 1;
+        hold.frames = g !== "none" && g !== "pinch" ? 1 : 0;
         hold.acted = false;
       }
 
-      // Trigger action when hold threshold reached (only once per hold)
+      // Expose progress for the hold-ring UI
+      const progress = (g !== "none" && g !== "pinch")
+        ? hold.frames / GESTURE_HOLD_FRAMES
+        : 0;
+      setGestureProgress(progress);
+
       if (hold.frames >= GESTURE_HOLD_FRAMES && !hold.acted) {
         hold.acted = true;
         sceneRef.current?.triggerBlowUp();
         switch (g) {
-          case "open_palm":
-            handleGestureSelect();
-            break;
-          case "fist":
-            handleGestureCancel();
-            break;
-          case "point":
-            handleGesturePoint();
-            break;
+          case "open_palm": handleGestureSelect(); break;
+          case "fist":      handleGestureCancel(); break;
+          case "point":     handleGesturePoint();  break;
         }
       }
     },
@@ -184,73 +192,58 @@ export default function UltraTouch() {
     [],
   );
 
-  // Gesture action handlers need latest state — use refs
-  const activePanelRef = useRef(activePanel);
-  const expandedRef = useRef(expanded);
+  // Refs to avoid stale closure captures
+  const activePanelRef  = useRef(activePanel);
+  const expandedRef     = useRef(expanded);
   const focusedMetricRef = useRef(focusedMetric);
   const focusedDeviceRef = useRef(focusedDevice);
-  const devicesRef = useRef(devices);
+  const devicesRef       = useRef(devices);
 
-  useEffect(() => { activePanelRef.current = activePanel; }, [activePanel]);
-  useEffect(() => { expandedRef.current = expanded; }, [expanded]);
+  useEffect(() => { activePanelRef.current   = activePanel;   }, [activePanel]);
+  useEffect(() => { expandedRef.current      = expanded;      }, [expanded]);
   useEffect(() => { focusedMetricRef.current = focusedMetric; }, [focusedMetric]);
   useEffect(() => { focusedDeviceRef.current = focusedDevice; }, [focusedDevice]);
-  useEffect(() => { devicesRef.current = devices; }, [devices]);
+  useEffect(() => { devicesRef.current       = devices;       }, [devices]);
 
   const handleGestureSelect = useCallback(() => {
-    const audio = audioRef.current;
     if (activePanelRef.current === 0) {
-      // Select drills into a metric
       setExpanded(true);
-      audio.playSelect();
-      addActivity("📊", `Drilled into metric`, "info");
+      audioRef.current.playSelect();
+      addActivity("📊", "Expanded metric view", "info");
     } else if (activePanelRef.current === 1) {
-      // Select toggles focused device
-      const flatDevices = devicesRef.current;
-      const device = flatDevices[focusedDeviceRef.current];
-      if (device) {
-        toggleDevice(device.id);
-      }
+      const device = devicesRef.current[focusedDeviceRef.current];
+      if (device) toggleDevice(device.id);
     }
-    // Panel 2 (Activity): select does nothing special
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addActivity]);
 
   const handleGestureCancel = useCallback(() => {
-    const audio = audioRef.current;
     if (expandedRef.current) {
       setExpanded(false);
-      audio.playCancel();
-      addActivity("↩️", "Zoomed out", "info");
+      audioRef.current.playCancel();
+      addActivity("↩️", "Collapsed view", "info");
     }
   }, [addActivity]);
 
   const handleGesturePoint = useCallback(() => {
-    // Point gesture: toggle the focused device on the device panel
     if (activePanelRef.current === 1) {
       const device = devicesRef.current[focusedDeviceRef.current];
-      if (device) {
-        toggleDevice(device.id);
-      }
+      if (device) toggleDevice(device.id);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggleDevice = useCallback(
     (deviceId: string) => {
-      const ds = deviceStateRef.current;
+      const ds  = deviceStateRef.current;
       const audio = audioRef.current;
       const result = ds.toggle(deviceId);
       if (result) {
-        const isOn =
-          result.type === "toggle" || result.type === "lock"
-            ? (result.state as boolean)
-            : false;
-        if (isOn) {
-          audio.playToggleOn();
-          sceneRef.current?.pulsePanel(1, "#4ade80");
-        } else {
-          audio.playToggleOff();
-          sceneRef.current?.pulsePanel(1, "#f87171");
-        }
+        const isOn = result.type === "toggle" || result.type === "lock"
+          ? (result.state as boolean)
+          : false;
+        isOn ? audio.playToggleOn() : audio.playToggleOff();
+        sceneRef.current?.pulsePanel(1, isOn ? "#4ade80" : "#f87171");
         setConfirmingDevice(deviceId);
         setTimeout(() => setConfirmingDevice(null), 600);
         addActivity(
@@ -260,7 +253,7 @@ export default function UltraTouch() {
         );
       } else {
         audio.playError();
-        addActivity("❌", `Failed to toggle device`, "error");
+        addActivity("❌", "Failed to toggle device", "error");
       }
     },
     [addActivity],
@@ -272,22 +265,16 @@ export default function UltraTouch() {
       dragAccumRef.current += dx;
       if (dragAccumRef.current > PANEL_SWITCH_THRESHOLD) {
         dragAccumRef.current = 0;
-        setActivePanel((prev) => {
-          const next = Math.min(prev + 1, PANEL_COUNT - 1);
-          if (next !== prev) {
-            audioRef.current.playNavigate();
-            addActivity("👉", `Switched to panel ${next + 1}`, "info");
-          }
+        setActivePanel((p) => {
+          const next = Math.min(p + 1, PANEL_COUNT - 1);
+          if (next !== p) { audioRef.current.playNavigate(); addActivity("→", `Panel ${next + 1}`, "info"); }
           return next;
         });
       } else if (dragAccumRef.current < -PANEL_SWITCH_THRESHOLD) {
         dragAccumRef.current = 0;
-        setActivePanel((prev) => {
-          const next = Math.max(prev - 1, 0);
-          if (next !== prev) {
-            audioRef.current.playNavigate();
-            addActivity("👈", `Switched to panel ${next + 1}`, "info");
-          }
+        setActivePanel((p) => {
+          const next = Math.max(p - 1, 0);
+          if (next !== p) { audioRef.current.playNavigate(); addActivity("←", `Panel ${next + 1}`, "info"); }
           return next;
         });
       }
@@ -298,20 +285,14 @@ export default function UltraTouch() {
   // ——— Zoom → drill in/out ———
   const handleZoom = useCallback(
     (factor: number) => {
-      if (factor < 0.92) {
-        // Zoom in → expand
-        if (!expandedRef.current) {
-          setExpanded(true);
-          audioRef.current.playSelect();
-          addActivity("🔍", "Zoomed into detail view", "info");
-        }
-      } else if (factor > 1.08) {
-        // Zoom out → collapse
-        if (expandedRef.current) {
-          setExpanded(false);
-          audioRef.current.playCancel();
-          addActivity("↩️", "Zoomed out", "info");
-        }
+      if (factor < 0.92 && !expandedRef.current) {
+        setExpanded(true);
+        audioRef.current.playSelect();
+        addActivity("🔍", "Zoomed into detail", "info");
+      } else if (factor > 1.08 && expandedRef.current) {
+        setExpanded(false);
+        audioRef.current.playCancel();
+        addActivity("↩️", "Zoomed out", "info");
       }
     },
     [addActivity],
@@ -325,25 +306,25 @@ export default function UltraTouch() {
     setCamera("off");
     setStatus({ hands: 0, mode: "idle" });
     setGesture("none");
+    setGestureProgress(0);
     dragAccumRef.current = 0;
-    addActivity("📷", "Camera disabled", "info");
+    addActivity("📷", "Camera off", "info");
   }, [addActivity]);
 
   const startGestures = useCallback(async () => {
-    const video = videoRef.current;
+    const video   = videoRef.current;
     const overlay = overlayRef.current;
     if (!video || !overlay || trackerRef.current) return;
 
-    // Init audio on first user gesture (browser policy)
     await audioRef.current.init();
-
     setCamera("starting");
     setError(null);
+    setShowCameraPrompt(false);
 
     const tracker = new HandTracker(video, overlay, {
-      onDrag: handleDrag,
-      onZoom: handleZoom,
-      onStatus: setStatus,
+      onDrag:      handleDrag,
+      onZoom:      handleZoom,
+      onStatus:    setStatus,
       onLandmarks: handleLandmarks,
     });
     trackerRef.current = tracker;
@@ -351,17 +332,17 @@ export default function UltraTouch() {
     try {
       await tracker.start();
       setCamera("on");
-      addActivity("📹", "Camera enabled — show your hands!", "success");
+      addActivity("📹", "Camera on — show your hands!", "success");
     } catch (err) {
       trackerRef.current = null;
       tracker.stop();
       setCamera("error");
-      setError(
-        err instanceof DOMException && err.name === "NotAllowedError"
-          ? "Camera access denied"
-          : "Tracking initialization failed",
-      );
-      addActivity("❌", "Camera failed to start", "error");
+      const msg = err instanceof DOMException && err.name === "NotAllowedError"
+        ? "Camera access denied — check browser permissions"
+        : `Tracking init failed: ${err instanceof Error ? err.message : String(err)}`;
+      setError(msg);
+      addActivity("❌", msg, "error");
+      console.error("[UltraTouch] tracker start error:", err);
     }
   }, [handleDrag, handleZoom, handleLandmarks, addActivity]);
 
@@ -381,62 +362,24 @@ export default function UltraTouch() {
   // ——— Keyboard navigation ———
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Don't intercept if user is in an input
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
-      )
-        return;
-
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       switch (e.key) {
         case "ArrowLeft":
-          if (!showGuide) {
-            e.preventDefault();
-            setActivePanel((p) => {
-              const next = Math.max(p - 1, 0);
-              if (next !== p) audioRef.current.playNavigate();
-              return next;
-            });
-          }
+          if (!showGuide) { e.preventDefault(); setActivePanel((p) => { const n = Math.max(p - 1, 0); if (n !== p) audioRef.current.playNavigate(); return n; }); }
           break;
         case "ArrowRight":
-          if (!showGuide) {
-            e.preventDefault();
-            setActivePanel((p) => {
-              const next = Math.min(p + 1, PANEL_COUNT - 1);
-              if (next !== p) audioRef.current.playNavigate();
-              return next;
-            });
-          }
+          if (!showGuide) { e.preventDefault(); setActivePanel((p) => { const n = Math.min(p + 1, PANEL_COUNT - 1); if (n !== p) audioRef.current.playNavigate(); return n; }); }
           break;
         case "Enter":
-          if (!showGuide) {
-            e.preventDefault();
-            if (!expanded) {
-              setExpanded(true);
-              audioRef.current.playSelect();
-            }
-          }
+          if (!showGuide && !expanded) { e.preventDefault(); setExpanded(true); audioRef.current.playSelect(); }
           break;
         case "Escape":
-          if (showGuide) {
-            setShowGuide(false);
-          } else if (expanded) {
-            setExpanded(false);
-            audioRef.current.playCancel();
-          }
+          if (showGuide) setShowGuide(false);
+          else if (expanded) { setExpanded(false); audioRef.current.playCancel(); }
           break;
-        case "g":
-        case "G":
-          toggleCamera();
-          break;
-        case "?":
-          setShowGuide((p) => !p);
-          break;
-        case "m":
-        case "M":
-          toggleMute();
-          break;
+        case "g": case "G": toggleCamera(); break;
+        case "?": setShowGuide((p) => !p); break;
+        case "m": case "M": toggleMute(); break;
       }
     };
     window.addEventListener("keydown", onKey);
@@ -453,41 +396,129 @@ export default function UltraTouch() {
 
   const cameraOn = camera === "on";
 
+  // ——— Voice Recognition ———
+  useEffect(() => {
+    // Check for browser support
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = "en-US";
+
+      recognition.onstart = () => {
+        setVoiceListening(true);
+        addActivity("🎙️", "Listening...", "info");
+      };
+
+      recognition.onresult = async (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        addActivity("🗣️", `Heard: "${transcript}"`, "info");
+        setVoiceListening(false);
+
+        // Send to backend
+        try {
+          const res = await fetch("/api/voice", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ transcript })
+          });
+          const data = await res.json();
+          if (res.ok) {
+            addActivity("🤖", "Executed AI command successfully", "success");
+          } else {
+            addActivity("❌", `AI Error: ${data.error}`, "error");
+          }
+        } catch (err: any) {
+          addActivity("❌", `Failed to contact AI: ${err.message}`, "error");
+        }
+      };
+
+      recognition.onerror = (event: any) => {
+        setVoiceListening(false);
+        addActivity("❌", `Voice error: ${event.error}`, "error");
+      };
+
+      recognition.onend = () => {
+        setVoiceListening(false);
+      };
+
+      recognitionRef.current = recognition;
+    }
+  }, [addActivity]);
+
+  const toggleVoice = useCallback(() => {
+    if (!recognitionRef.current) {
+      addActivity("❌", "Speech Recognition not supported in this browser", "error");
+      return;
+    }
+    if (voiceListening) {
+      recognitionRef.current.stop();
+    } else {
+      try {
+        recognitionRef.current.start();
+      } catch (e) {
+        console.error("Failed to start voice", e);
+      }
+    }
+  }, [voiceListening, addActivity]);
+
   return (
     <>
-      {/* 3D ambient background */}
+      {/* 3D plasma orb background */}
       <div ref={sceneContainerRef} className="scene-root" />
 
-      {/* Status bar */}
       <StatusBar
-        cameraOn={cameraOn}
+        cameraOn={camera === "on"}
         cameraStarting={camera === "starting"}
         gesture={gesture}
+        gestureProgress={gestureProgress}
         soundMuted={soundMuted}
         activePanel={activePanel}
         onToggleCamera={toggleCamera}
         onToggleMute={toggleMute}
         onShowGuide={() => setShowGuide(true)}
+        voiceListening={voiceListening}
+        onToggleVoice={toggleVoice}
       />
 
-      {/* Main content: three panels */}
+      {/* First-time camera prompt */}
+      {showCameraPrompt && camera === "off" && (
+        <div className="camera-prompt" role="complementary">
+          <div className="camera-prompt-inner">
+            <span className="camera-prompt-icon">✋</span>
+            <p>Enable gesture control</p>
+            <button
+              className="camera-prompt-btn"
+              onClick={toggleCamera}
+              type="button"
+            >
+              Start Camera
+            </button>
+            <button
+              className="camera-prompt-dismiss"
+              onClick={() => setShowCameraPrompt(false)}
+              aria-label="Dismiss"
+              type="button"
+            >
+              Use keyboard only
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Three panels */}
       <main className="panel-arc" role="main">
         <div
           className={`panel-container ${expanded ? "expanded" : ""}`}
           style={{ transform: `translateX(${-activePanel * 100}%)` }}
         >
-          <section
-            className={`panel-slot ${activePanel === 0 ? "active" : ""}`}
-            aria-hidden={activePanel !== 0}
-          >
+          <section className={`panel-slot ${activePanel === 0 ? "active" : ""}`} aria-hidden={activePanel !== 0}>
             <DataPanel
               metrics={metrics}
               focusedMetric={focusedMetric}
               expanded={expanded && activePanel === 0}
-              onFocusMetric={(i) => {
-                setFocusedMetric(i);
-                audioRef.current.playHover();
-              }}
+              onFocusMetric={(i) => { setFocusedMetric(i); audioRef.current.playHover(); }}
               onSelectMetric={(i) => {
                 setFocusedMetric(i);
                 setExpanded(true);
@@ -496,17 +527,11 @@ export default function UltraTouch() {
               }}
             />
           </section>
-          <section
-            className={`panel-slot ${activePanel === 1 ? "active" : ""}`}
-            aria-hidden={activePanel !== 1}
-          >
+          <section className={`panel-slot ${activePanel === 1 ? "active" : ""}`} aria-hidden={activePanel !== 1}>
             <DevicePanel
               devices={devices}
               focusedDevice={focusedDevice}
-              onFocusDevice={(i) => {
-                setFocusedDevice(i);
-                audioRef.current.playHover();
-              }}
+              onFocusDevice={(i) => { setFocusedDevice(i); audioRef.current.playHover(); }}
               onToggleDevice={toggleDevice}
               onSetDeviceValue={(id, v) => {
                 deviceStateRef.current.setValue(id, v);
@@ -517,10 +542,7 @@ export default function UltraTouch() {
               confirmingDevice={confirmingDevice}
             />
           </section>
-          <section
-            className={`panel-slot ${activePanel === 2 ? "active" : ""}`}
-            aria-hidden={activePanel !== 2}
-          >
+          <section className={`panel-slot ${activePanel === 2 ? "active" : ""}`} aria-hidden={activePanel !== 2}>
             <ActivityPanel
               entries={activityLog}
               soundMuted={soundMuted}
@@ -530,7 +552,6 @@ export default function UltraTouch() {
         </div>
       </main>
 
-      {/* Camera preview */}
       <CameraPreview
         videoRef={videoRef}
         overlayRef={overlayRef}
@@ -539,10 +560,8 @@ export default function UltraTouch() {
         gesture={gesture}
       />
 
-      {/* Gesture guide */}
       <GestureGuide visible={showGuide} onClose={() => setShowGuide(false)} />
 
-      {/* Keyboard hints */}
       <div className="keyboard-hints" aria-hidden="true">
         <span><kbd>←</kbd><kbd>→</kbd> panels</span>
         <span><kbd>Enter</kbd> select</span>
@@ -552,12 +571,7 @@ export default function UltraTouch() {
         <span><kbd>M</kbd> mute</span>
       </div>
 
-      {/* Error toast */}
-      {error && (
-        <div className="error-toast" role="alert">
-          {error}
-        </div>
-      )}
+      {error && <div className="error-toast" role="alert">{error}</div>}
     </>
   );
 }
