@@ -10,6 +10,10 @@ export interface Device {
   type: "toggle" | "range" | "lock";
   state: boolean | number;
   category: "lighting" | "climate" | "security" | "appliances" | "android";
+  /** Min value for range-type devices */
+  rangeMin?: number;
+  /** Max value for range-type devices */
+  rangeMax?: number;
   /** The ADB action mapped to this device */
   actionId?: string;
 }
