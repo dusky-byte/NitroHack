@@ -64,6 +64,7 @@ export default function UltraTouch() {
 
   // ——— Voice State ———
   const [voiceListening, setVoiceListening] = useState(false);
+  const voiceListeningRef = useRef(false);
   const recognitionRef = useRef<any>(null);
 
   // ——— Activity log helper ———
@@ -407,6 +408,7 @@ export default function UltraTouch() {
       recognition.lang = "en-US";
 
       recognition.onstart = () => {
+        voiceListeningRef.current = true;
         setVoiceListening(true);
         addActivity("🎙️", "Listening...", "info");
       };
@@ -435,11 +437,13 @@ export default function UltraTouch() {
       };
 
       recognition.onerror = (event: any) => {
+        voiceListeningRef.current = false;
         setVoiceListening(false);
         addActivity("❌", `Voice error: ${event.error}`, "error");
       };
 
       recognition.onend = () => {
+        voiceListeningRef.current = false;
         setVoiceListening(false);
       };
 
@@ -452,16 +456,20 @@ export default function UltraTouch() {
       addActivity("❌", "Speech Recognition not supported in this browser", "error");
       return;
     }
-    if (voiceListening) {
+    if (voiceListeningRef.current) {
       recognitionRef.current.stop();
+      voiceListeningRef.current = false;
+      setVoiceListening(false);
     } else {
       try {
+        voiceListeningRef.current = true;
         recognitionRef.current.start();
       } catch (e) {
+        voiceListeningRef.current = false;
         console.error("Failed to start voice", e);
       }
     }
-  }, [voiceListening, addActivity]);
+  }, [addActivity]);
 
   return (
     <>

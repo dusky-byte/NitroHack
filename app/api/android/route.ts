@@ -11,9 +11,11 @@ const execPromise = util.promisify(exec);
 // Attempt to auto-detect ADB if it's not in PATH
 function getAdbCommand(): string {
   const localAppData = path.join(os.homedir(), "AppData", "Local", "Android", "Sdk", "platform-tools", "adb.exe");
+  const platformToolsDir = path.join(process.cwd(), "platform-tools", "adb.exe");
   const localDir = path.join(process.cwd(), "adb.exe");
   
   if (fs.existsSync(localAppData)) return `"${localAppData}"`;
+  if (fs.existsSync(platformToolsDir)) return `"${platformToolsDir}"`;
   if (fs.existsSync(localDir)) return `"${localDir}"`;
   
   return "adb"; // Fallback to PATH

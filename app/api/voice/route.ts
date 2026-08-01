@@ -9,9 +9,11 @@ const execPromise = util.promisify(exec);
 
 function getAdbCommand(): string {
   const localAppData = path.join(os.homedir(), "AppData", "Local", "Android", "Sdk", "platform-tools", "adb.exe");
+  const platformToolsDir = path.join(process.cwd(), "platform-tools", "adb.exe");
   const localDir = path.join(process.cwd(), "adb.exe");
   
   if (fs.existsSync(localAppData)) return `"${localAppData}"`;
+  if (fs.existsSync(platformToolsDir)) return `"${platformToolsDir}"`;
   if (fs.existsSync(localDir)) return `"${localDir}"`;
   
   return "adb"; // Fallback to PATH
@@ -42,35 +44,39 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Transcript is required" }, { status: 400 });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey || apiKey === "your_api_key_here") {
-      return NextResponse.json({ error: "Missing GEMINI_API_KEY in .env.local" }, { status: 401 });
+      return NextResponse.json({ error: "Missing GROQ_API_KEY in .env.local" }, { status: 401 });
     }
 
     console.log(`[Voice API] User said: "${transcript}"`);
 
-    // Call Gemini API
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+    // Call Groq API (OpenAI-compatible)
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
       body: JSON.stringify({
-        system_instruction: { parts: { text: SYSTEM_PROMPT } },
-        contents: [{ parts: [{ text: transcript }] }],
-        generationConfig: {
-          temperature: 0.1,
-          responseMimeType: "application/json",
-        }
+        model: "llama-3.3-70b-versatile",
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: transcript },
+        ],
+        temperature: 0.1,
+        response_format: { type: "json_object" },
       })
     });
 
     if (!response.ok) {
       const err = await response.text();
-      console.error("Gemini API Error:", err);
+      console.error("Groq API Error:", err);
       return NextResponse.json({ error: "LLM Provider Error" }, { status: 502 });
     }
 
     const data = await response.json();
-    const rawOutput = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    const rawOutput = data.choices?.[0]?.message?.content;
     
     if (!rawOutput) {
       throw new Error("No output from LLM");
@@ -78,7 +84,9 @@ export async function POST(request: Request) {
 
     let commands: string[] = [];
     try {
-      commands = JSON.parse(rawOutput);
+      const parsed = JSON.parse(rawOutput);
+      // Handle both direct array and object with a commands key
+      commands = Array.isArray(parsed) ? parsed : (parsed.commands ?? parsed.result ?? []);
     } catch (e) {
       console.error("Failed to parse LLM output:", rawOutput);
       return NextResponse.json({ error: "Failed to parse command from AI" }, { status: 500 });
