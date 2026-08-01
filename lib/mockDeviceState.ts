@@ -14,6 +14,8 @@ export interface Device {
   rangeMin?: number;
   /** Max value for range-type devices */
   rangeMax?: number;
+  /** Display unit for range-type devices (e.g. "%", "°F") */
+  rangeUnit?: string;
   /** The ADB action mapped to this device */
   actionId?: string;
 }
