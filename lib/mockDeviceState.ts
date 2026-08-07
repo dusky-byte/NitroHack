@@ -9,7 +9,7 @@ export interface Device {
   icon: string;
   type: "toggle" | "range" | "lock";
   state: boolean | number;
-  category: "lighting" | "climate" | "security" | "appliances" | "android";
+  category: "lighting" | "climate" | "security" | "appliances" | "android" | "pc";
   /** Min value for range-type devices */
   rangeMin?: number;
   /** Max value for range-type devices */
@@ -18,6 +18,10 @@ export interface Device {
   rangeUnit?: string;
   /** The ADB action mapped to this device */
   actionId?: string;
+  /** User-friendly name alias for ADB devices */
+  alias?: string;
+  /** The model name of the device */
+  model?: string;
 }
 
 export type DeviceListener = (devices: Device[]) => void;
@@ -75,6 +79,8 @@ export class MockDeviceState {
   private devices: Device[];
   private listeners = new Set<DeviceListener>();
   private pollingInterval: ReturnType<typeof setInterval> | null = null;
+  private abortController: AbortController | null = null;
+  private isFetching = false;
 
   constructor() {
     this.devices = [];
@@ -86,18 +92,34 @@ export class MockDeviceState {
   }
 
   private async fetchDevices() {
+    // Skip if a fetch is already in flight
+    if (this.isFetching) return;
+    this.isFetching = true;
+
+    // Cancel any lingering previous request
+    if (this.abortController) {
+      this.abortController.abort();
+    }
+    this.abortController = new AbortController();
+
     try {
-      const res = await fetch("/api/android");
+      const res = await fetch("/api/android", { signal: this.abortController.signal });
+      if (!res.ok) {
+        // Route not ready yet (e.g. 404 during startup) — silently ignore
+        return;
+      }
       const data = await res.json();
       
       if (data.devices && data.devices.length > 0) {
         const connectedDevices: Device[] = data.devices.map((d: any) => ({
           id: `adb-device-${d.id}`,
-          name: `${d.model} (${d.status})`,
-          icon: d.status === "device" ? "smartphone" : "warning",
+          name: d.alias ? `${d.alias} (${d.model})` : `${d.model} (${d.status})`,
+          icon: d.model === "Local PC" ? "laptop" : (d.status === "device" ? "smartphone" : "warning"),
           type: "toggle",
           state: d.status === "device",
-          category: "android",
+          category: d.model === "Local PC" ? "pc" : "android",
+          alias: d.alias,
+          model: d.model,
         }));
         
         // Only show controls if there's an actual device connected
@@ -106,16 +128,21 @@ export class MockDeviceState {
         this.devices = [];
       }
       this.notify();
-    } catch (err) {
-      console.error("Failed to fetch devices:", err);
-      this.devices = [];
-      this.notify();
+    } catch (err: any) {
+      if (err.name !== "AbortError") {
+        console.error("Failed to fetch devices:", err);
+        this.devices = [];
+        this.notify();
+      }
+    } finally {
+      this.isFetching = false;
     }
   }
 
   private startPolling() {
     if (!this.pollingInterval) {
-      this.pollingInterval = setInterval(() => this.fetchDevices(), 5000);
+      // Poll every 20s instead of 10s to avoid terminal spam in dev mode
+      this.pollingInterval = setInterval(() => this.fetchDevices(), 20000);
     }
   }
 
@@ -144,7 +171,11 @@ export class MockDeviceState {
 
     // Fire HTTP request to ADB backend asynchronously
     if (device.actionId) {
-      this.executeAdbAction(device.actionId).catch(console.error);
+      // Find a connected adb device to target, if any.
+      const targetDevice = this.devices.find(d => d.id.startsWith("adb-device-") && d.state === true);
+      const targetId = targetDevice ? targetDevice.id.replace("adb-device-", "") : undefined;
+      
+      this.executeAdbAction(device.actionId, targetId).catch(console.error);
     }
 
     this.notify();
@@ -157,12 +188,63 @@ export class MockDeviceState {
     return null;
   }
 
-  private async executeAdbAction(actionId: string) {
+  async connectWifi(ip: string, port: string): Promise<void> {
+    const res = await fetch("/api/android", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "connect", ip, port }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      throw new Error(data.error || "Failed to connect");
+    }
+    await this.fetchDevices();
+  }
+
+  async scanMdns(): Promise<Array<{ name: string; type: "pairing" | "connect"; ip: string; port: string }>> {
+    const res = await fetch("/api/android", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "mdns" }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      throw new Error(data.error || "Failed to scan mDNS");
+    }
+    return data.services || [];
+  }
+
+  async pairWifi(ip: string, port: string, code: string): Promise<void> {
+    const res = await fetch("/api/android", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "pair", ip, port, code }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      throw new Error(data.error || "Failed to pair");
+    }
+  }
+
+  async setAlias(deviceId: string, alias: string): Promise<void> {
+    const res = await fetch("/api/android", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "set_alias", deviceId, alias }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      throw new Error(data.error || "Failed to set alias");
+    }
+    await this.fetchDevices(); // Refresh list to get new alias
+  }
+
+  private async executeAdbAction(actionId: string, deviceId?: string) {
     try {
       const res = await fetch("/api/android", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: actionId }),
+        body: JSON.stringify({ type: "action", action: actionId, deviceId }),
       });
       const data = await res.json();
       if (!res.ok) {

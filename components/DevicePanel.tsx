@@ -1,6 +1,7 @@
 "use client";
 
 import type { Device } from "@/lib/mockDeviceState";
+import WifiConnectPanel from "./WifiConnectPanel";
 
 interface DevicePanelProps {
   devices: Device[];
@@ -9,6 +10,10 @@ interface DevicePanelProps {
   onToggleDevice: (deviceId: string) => void;
   onSetDeviceValue: (deviceId: string, value: number) => void;
   confirmingDevice: string | null;
+  onConnectWifi: (ip: string, port: string) => Promise<void>;
+  onScanMdns: () => Promise<any>;
+  onPairWifi: (ip: string, port: string, code: string) => Promise<void>;
+  onSetAlias: (deviceId: string, alias: string) => Promise<void>;
 }
 
 const CATEGORY_ORDER = ["android", "lighting", "climate", "security", "appliances"] as const;
@@ -27,6 +32,10 @@ export default function DevicePanel({
   onToggleDevice,
   onSetDeviceValue,
   confirmingDevice,
+  onConnectWifi,
+  onScanMdns,
+  onPairWifi,
+  onSetAlias,
 }: DevicePanelProps) {
   // Group devices by category
   const grouped = CATEGORY_ORDER.map((cat) => ({
@@ -75,6 +84,11 @@ export default function DevicePanel({
       onKeyDown={handleKeyDown}
     >
       <h2 className="panel-title">Devices</h2>
+      
+      <div className="device-category">
+        <WifiConnectPanel onConnect={onConnectWifi} onScan={onScanMdns} onPair={onPairWifi} />
+      </div>
+
       {grouped.map((group) => (
         <div key={group.category} className="device-category">
           <h3 className="device-category-label">{group.label}</h3>
@@ -113,7 +127,25 @@ export default function DevicePanel({
                     <span className="device-icon material-symbols-outlined">{device.icon}</span>
                   </div>
                   <div className="device-info">
-                    <span className="device-name">{device.name}</span>
+                    <span className="device-name" style={{ display: 'flex', alignItems: 'center' }}>
+                      {device.name}
+                      {device.id.startsWith("adb-device-") && (
+                        <button
+                          className="rename-btn"
+                          title="Rename device"
+                          style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, display: 'flex', opacity: 0.6 }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const newAlias = prompt("Enter a friendly name for this device:", device.alias || "");
+                            if (newAlias !== null) {
+                              onSetAlias(device.id.replace("adb-device-", ""), newAlias);
+                            }
+                          }}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: '16px', marginLeft: '6px' }}>edit</span>
+                        </button>
+                      )}
+                    </span>
                     <span className="device-state">{formatState(device)}</span>
                   </div>
                   <div className="device-control">

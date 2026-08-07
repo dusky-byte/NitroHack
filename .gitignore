@@ -24,3 +24,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Scripts
+templates/
+scratch/
+
+# DB
+nitrohack.db
+
+# venv
+ultron/

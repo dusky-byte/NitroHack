@@ -113,6 +113,20 @@ export default function UltraTouch() {
     [addActivity],
   );
 
+  // ——— Auto-connect Last Wi-Fi IP ———
+  useEffect(() => {
+    const lastIp = localStorage.getItem("last_wifi_ip");
+    const lastPort = localStorage.getItem("last_wifi_port");
+    if (lastIp && lastPort) {
+      addActivity("wifi", `Auto-connecting to last device at ${lastIp}:${lastPort}...`, "info");
+      deviceStateRef.current.connectWifi(lastIp, lastPort).then(() => {
+        addActivity("wifi", `Auto-connected to ${lastIp}:${lastPort}`, "success");
+      }).catch((err) => {
+        addActivity("❌", `Auto-connect failed: ${err.message}`, "error");
+      });
+    }
+  }, [addActivity]);
+
   // ——— Voice Recognition ———
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -559,6 +573,7 @@ export default function UltraTouch() {
             <span className="camera-prompt-icon">✋</span>
             <p>Enable gesture control</p>
             <button
+              suppressHydrationWarning
               className="camera-prompt-btn"
               onClick={toggleCamera}
               type="button"
@@ -566,6 +581,7 @@ export default function UltraTouch() {
               Start Camera
             </button>
             <button
+              suppressHydrationWarning
               className="camera-prompt-dismiss"
               onClick={() => setShowCameraPrompt(false)}
               aria-label="Dismiss"
@@ -610,6 +626,27 @@ export default function UltraTouch() {
                 if (d) addActivity(d.icon, `${d.name}: ${d.state}${d.rangeUnit ?? ""}`, "success");
               }}
               confirmingDevice={confirmingDevice}
+              onConnectWifi={async (ip, port) => {
+                await deviceStateRef.current.connectWifi(ip, port);
+                addActivity("wifi", `Connected to ${ip}:${port}`, "success");
+                localStorage.setItem("last_wifi_ip", ip);
+                localStorage.setItem("last_wifi_port", port);
+              }}
+              onScanMdns={async () => {
+                return await deviceStateRef.current.scanMdns();
+              }}
+              onPairWifi={async (ip, port, code) => {
+                await deviceStateRef.current.pairWifi(ip, port, code);
+                addActivity("wifi", `Paired with ${ip}:${port}`, "success");
+              }}
+              onSetAlias={async (id, alias) => {
+                try {
+                  await deviceStateRef.current.setAlias(id, alias);
+                  addActivity("edit", `Renamed device to "${alias}"`, "success");
+                } catch (err: any) {
+                  addActivity("❌", `Failed to rename: ${err.message}`, "error");
+                }
+              }}
             />
           </section>
           <section className={`panel-slot ${activePanel === 2 ? "active" : ""}`} aria-hidden={activePanel !== 2}>
@@ -640,6 +677,13 @@ export default function UltraTouch() {
         <span><kbd>?</kbd> guide</span>
         <span><kbd>M</kbd> mute</span>
       </div>
+
+      {voiceListening && voiceTranscript && (
+        <div className="voice-transcript" aria-live="polite">
+          <span className="voice-transcript-text">{voiceTranscript}</span>
+          <span className="voice-transcript-dot">●</span>
+        </div>
+      )}
 
       {error && <div className="error-toast" role="alert">{error}</div>}
     </>
